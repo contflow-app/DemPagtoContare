@@ -115,15 +115,17 @@ if st.button("Processar", type="primary"):
             liquido_num = float(liquido)
             limiar = float(limiar_liquido_zero)
 
-            aplica_especial = (((liquido_num <= limiar) or (v981 is not None and float(v981) > 0.0)) and status_colab.upper().startswith("ATIV"))
-if aplica_especial:
-                regra = "ESPECIAL: bruto_planilha - verba8781 - verba981 (liq baixo/981 presente & ATIVO) - pagamentos_anteriores"
+            aplica_especial = (
+                ((liquido_num <= limiar) or (v981 is not None and float(v981) > 0.0))
+                and status_colab.upper().startswith("ATIV")
+            )
+
+            if aplica_especial:
+                regra = "ESPECIAL: bruto_planilha - verba8781 - verba981 (liq baixo/981 presente & ATIVO)"
                 base = float(bruto_ref)
                 v8781_num = float(v8781) if v8781 is not None else 0.0
                 v981_num = float(v981) if v981 is not None else 0.0
                 pa = float(pagamentos_anteriores or 0.0)
-                if v8781 is None: notas.append("regra especial: verba 8781 não encontrada (assumindo 0)")
-                if v981 is None: notas.append("regra especial: verba 981 não encontrada (assumindo 0)")
                 diferenca = base - v8781_num - v981_num - pa
             else:
                 diferenca = float(bruto_ref) - liquido_num
