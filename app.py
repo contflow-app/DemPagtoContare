@@ -125,20 +125,15 @@ if st.button("Processar", type="primary"):
                 pagamentos_anteriores += venc
 
 regra = "PADRAO: bruto_ref - liquido_holerite"
+        # Inicialização
+        regra = "INDEFINIDA"
         diferenca = None
         valor_a_pagar = None
-        notas = []
-
-        if nome_final is None: notas.append("nome não identificado (PDF e planilha)")
-        if cpf_final is None: notas.append("cpf não identificado (PDF e planilha)")
-        if bruto_ref is None: notas.append("bruto referencial não encontrado na planilha (match falhou)")
-        if liquido is None: notas.append("líquido não encontrado no PDF")
 
         if bruto_ref is not None and liquido is not None:
             liquido_num = float(liquido)
             limiar = float(limiar_liquido_zero)
 
-            # gatilho especial: líquido baixo OU 981 presente
             gatilho_especial = (liquido_num <= limiar) or (v981 is not None and float(v981) > 0.0)
             is_ativo = status_colab.upper().startswith("ATIV")
 
@@ -146,7 +141,8 @@ regra = "PADRAO: bruto_ref - liquido_holerite"
                 regra = "ESPECIAL: bruto_planilha - verba8781 - INSS (liq baixo/981 presente & ATIVO)"
                 base = float(bruto_ref)
                 v8781_num = float(v8781) if v8781 is not None else 0.0
-                diferenca = base - v8781_num - float(inss_total or 0.0)
+                inss_num = float(inss_total) if inss_total is not None else 0.0
+                diferenca = base - v8781_num - inss_num
             else:
                 regra = "PADRAO: bruto_ref - liquido_holerite"
                 diferenca = float(bruto_ref) - liquido_num
