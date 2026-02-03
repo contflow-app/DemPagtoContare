@@ -221,6 +221,8 @@ if st.button("Processar", type="primary"):
             "outros_descontos": outros_descontos,
             "page_index": c.get("page_index", 0),
             "eventos": eventos,
+            "match_score": ref.get("match_score"),
+            "match_nome_planilha": ref.get("match_nome_planilha"),
             "raw_text": c.get("raw_text", ""),
         })
 
@@ -235,6 +237,10 @@ if df is not None:
 
     with tab1:
         st.dataframe(df.drop(columns=["eventos","raw_text"], errors="ignore"), use_container_width=True)
+
+        with st.expander("Colaboradores sem match na planilha (sem Bruto)"):
+            sem = df[df["bruto_planilha"].isna()][["nome","cpf","match_score","match_nome_planilha"]]
+            st.dataframe(sem, use_container_width=True, hide_index=True)
 
     with tab2:
         idx = st.selectbox("Selecione o colaborador", df.index, format_func=lambda i: f"{df.loc[i,'nome']}" + (f" — {df.loc[i,'cpf']}" if str(df.loc[i,'cpf'] or '').strip() else ''))
