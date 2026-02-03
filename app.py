@@ -237,7 +237,7 @@ if df is not None:
         st.dataframe(df.drop(columns=["eventos","raw_text"], errors="ignore"), use_container_width=True)
 
     with tab2:
-        idx = st.selectbox("Selecione o colaborador", df.index, format_func=lambda i: f"{df.loc[i,'nome']} — {df.loc[i,'cpf']}")
+        idx = st.selectbox("Selecione o colaborador", df.index, format_func=lambda i: f"{df.loc[i,'nome']}" + (f" — {df.loc[i,'cpf']}" if str(df.loc[i,'cpf'] or '').strip() else ''))
         row = df.loc[idx]
 
         cA, cB, cC, cD = st.columns(4)
