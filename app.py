@@ -164,6 +164,10 @@ if st.button("Processar", type="primary"):
         desc_inss = None
         outros_descontos = None
 
+        # Inicializa para evitar NameError em casos sem bruto_ref
+        ref_8781 = None
+        bruto_proporcional = None
+
         if bruto_ref is not None:
             # Recalcular componentes a partir dos eventos (independente do 'liquido' do holerite)
             total_proventos = 0.0
