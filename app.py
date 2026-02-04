@@ -152,183 +152,191 @@ if st.button("Processar", type="primary"):
         )
     with st.spinner("Lendo XLSX..."):
         df_sal = load_salario_real_xlsx(str(xlsx_path))
-
     rows = []
     for c in colabs:
         ref = find_colaborador_ref(
             df_sal,
-            nome=c.get('nome'),
-            gpt_match_fn=lambda nome, cands: gpt_disambiguate_name(nome, cands, model=openai_model, api_key=openai_key),
+            nome=(c.get("nome") or ""),
+            gpt_match_fn=(lambda nome, cands: gpt_disambiguate_name(nome, cands, model=openai_model, api_key=openai_key)) if usar_gpt else None,
         )
-        nome = c.get("nome") or ref.get("nome")
-        cpf = c.get("cpf")
+
+        nome = (c.get("nome") or ref.get("nome") or "").strip()
         bruto_ref = ref.get("bruto_referencial")
         status = (ref.get("status") or "").upper()
-        depto = ref.get("departamento") or ""
-        cargo_base = ref.get("cargo") or ""
+        depto = (ref.get("departamento") or "").strip()
+        cargo_base = (ref.get("cargo") or "").strip()
 
         familia = infer_familia(f"{depto} {cargo_base}")
         nivel = nivel_por_salario(bruto_ref) if bruto_ref is not None else None
         cargo_plano = cargo_final(familia, nivel) if bruto_ref is not None else None
 
-        liquido = c.get("liquido")
         eventos = c.get("eventos") or []
-        # apurar verbas (a partir do espelho CLT)
-        salario_base_clt = 0.0  # 8781 ou 8786 (apenas para referência / base dias)
-        ref_base_dias = None
-        inss = 0.0
-        verba_981 = 0.0
-        inss = 0.0
-        inss = 0.0
+
+        # ---------- Apuração de verbas do holerite CLT ----------
+        ref_base_dias = 30.0
+        desc_inss = 0.0
+        desc_adiantamento = 0.0
 
         for e in eventos:
             cod = str(e.get("codigo") or "").strip()
-            desc = str(e.get("descricao") or "").upper()
-            provento = float(e.get("provento") or 0.0)
             desconto = float(e.get("desconto") or 0.0)
+            provento = float(e.get("provento") or 0.0)
             referencia = str(e.get("referencia") or "").strip()
 
-            if cod in ("8781", "8786"):
-                salario_base_clt += provento
-                # referência em dias (ex.: 30,00 / 15,00)
-                if ref_base_dias is None and referencia:
-                    try:
-                        ref_base_dias = float(referencia.replace(".", "").replace(",", "."))
-                    except Exception:
-                        ref_base_dias = None
+            # dias trabalhados / referência (8781 ou 8786)
+            if cod in ("8781", "8786") and referencia:
+                try:
+                    ref_base_dias = float(referencia.replace(".", "").replace(",", "."))
+                except Exception:
+                    pass
 
-            if cod == "981":
-                verba_981 += desconto
-
-            # INSS deve ser pelo código 998 (e 821 quando existir como INSS diferença férias)
+            # INSS (998 + 821 quando existir)
             if cod in ("998", "821"):
-                inss += desconto
+                desc_inss += desconto
 
-        # fallback: se não achou referência base por 8781/8786, assume 30
-        if ref_base_dias is None:
-            ref_base_dias = 30.0
-# Cálculo (claro e objetivo)
-# Remuneração Bruta proporcional (planilha) = bruto_planilha * (ref_base_dias/30)
-# (+) Outros Proventos (tudo que é PROVENTO no holerite, exceto códigos de salário-base 8781/8786)
-# (-) Desc. Adiantamento (981)
-# (-) Desc. INSS (998/821)
-# (-) Outros Descontos (todos os demais DESCONTOS, exceto INSS e 981)
-# = Remuneração Líquida a Pagar
-regra = "DEMONSTRATIVO: Bruto(planilha proporcional) + Outros Proventos - 981 - INSS - Outros Descontos"
-valor_a_pagar = None
+            # adiantamento salarial
+            if cod == "981":
+                desc_adiantamento += desconto
 
-# componentes para exibição/relatório (sempre definidos)
-outros_proventos = 0.0
-desc_adiantamento = float(locals().get('verba_981', locals().get('desc_adiantamento', 0.0)) or 0.0)
-desc_inss = float(locals().get('inss', 0.0) or 0.0)
-outros_descontos = 0.0
+        # ---------- Cálculo claro e objetivo ----------
+        # Remuneração Bruta (planilha) proporcional aos dias (ref/30)
+        bruto_proporcional = None
+        outros_proventos = 0.0
+        outros_descontos = 0.0
+        valor_a_pagar = None
+        regra = "DEMONSTRATIVO: bruto(planilha proporcional) + outros proventos - 981 - INSS - outros descontos"
 
-ref_8781 = float(ref_base_dias or 30.0)
-bruto_proporcional = None
+        if bruto_ref is not None:
+            bruto_proporcional = float(bruto_ref) * (float(ref_base_dias) / 30.0)
 
-if bruto_ref is not None:
-    bruto_proporcional = float(bruto_ref) * (float(ref_8781) / 30.0)
+            for e in eventos:
+                cod = str(e.get("codigo") or "").strip()
+                pv = float(e.get("provento") or 0.0)
+                dc = float(e.get("desconto") or 0.0)
 
-    for e in eventos:
-        cod = str(e.get("codigo") or "").strip()
-        pv = float(e.get("provento") or 0.0)
-        dc = float(e.get("desconto") or 0.0)
+                # Outros proventos: exclui salário-base CLT (8781/8786) pois substituímos pelo bruto da planilha
+                if pv and cod not in ("8781", "8786"):
+                    outros_proventos += pv
 
-        # Outros proventos: exclui salário-base CLT (substituído pelo bruto da planilha)
-        if pv and cod not in ("8781", "8786"):
-            outros_proventos += pv
+                # Outros descontos: exclui INSS (998/821) e 981 (já separados)
+                if dc and cod not in ("981", "998", "821"):
+                    outros_descontos += dc
 
-        # Outros descontos: exclui INSS e 981 (já separados)
-        if dc and cod not in ("981", "998", "821"):
-            outros_descontos += dc
-
-    valor_a_pagar = bruto_proporcional + outros_proventos - desc_adiantamento - desc_inss - outros_descontos
-    # nunca negativo
-    if valor_a_pagar < 0:
-        valor_a_pagar = 0.0
-
+            valor_a_pagar = bruto_proporcional + outros_proventos - desc_adiantamento - desc_inss - outros_descontos
+            if valor_a_pagar < 0:
+                valor_a_pagar = 0.0
 
         rows.append({
             "competencia": c.get("competencia") or competencia_global,
             "nome": nome,
-            "cpf": cpf,
             "departamento": depto or None,
             "cargo_plano": cargo_plano,
-            "status": ref.get("status"),
             "bruto_planilha": bruto_ref,
-            "liquido_holerite": liquido,
-            "8781_salario_contratual": salario_base_clt,
-            "998_inss": inss,
-            "981_desc_adiantamento": verba_981,
-            "regra_aplicada": regra,
-            "valor_a_pagar": valor_a_pagar,
-            "remuneracao_bruta_planilha": bruto_ref,
-            "referencia_8781": ref_8781,
-            "remuneracao_bruta_proporcional": bruto_proporcional,
+            "referencia_base_dias": ref_base_dias,
+            "bruto_planilha_proporcional": bruto_proporcional,
             "outros_proventos": outros_proventos,
             "desc_adiantamento_981": desc_adiantamento,
-            "desc_inss_998": desc_inss,
+            "desc_inss_998_821": desc_inss,
             "outros_descontos": outros_descontos,
-            "page_index": c.get("page_index", 0),
+            "valor_a_pagar": valor_a_pagar,
+            "regra_aplicada": regra,
             "eventos": eventos,
-            "raw_text": c.get("raw_text", ""),
+            "holerite_texto": c.get("raw_text") or "",
         })
 
     df = pd.DataFrame(rows)
+
+
     st.session_state["df"] = df
     st.session_state["pdf_bytes"] = pdf_path.read_bytes()
     st.success(f"Processado: {len(df)} colaborador(es).")
 
-df = st.session_state.get("df")
-if df is not None:
-    tab1, tab2, tab3 = st.tabs(["Consolidado", "Espelho do Recibo", "Exportações"])
+    df = st.session_state.get("df")
+pdf_bytes = st.session_state.get("pdf_bytes")
 
-    with tab1:
-        st.dataframe(df.drop(columns=["eventos","raw_text"], errors="ignore"), use_container_width=True)
+if df is None:
+    st.info("Envie o PDF do holerite e a planilha e clique em **Processar**.")
+    st.stop()
 
-    with tab2:
-        idx = st.selectbox("Selecione o colaborador", df.index, format_func=lambda i: f"{df.loc[i,'nome']}" + (f" — {df.loc[i,'cpf']}" if str(df.loc[i,'cpf'] or '').strip() else ''))
-        row = df.loc[idx]
+if df.empty:
+    st.warning("Nenhum colaborador foi extraído do PDF. Verifique o arquivo e tente novamente.")
+    st.stop()
 
-        cA, cB, cC, cD = st.columns(4)
-        cA.metric("Competência", row.get("competencia"))
-        cB.metric("Líquido", row.get("liquido_holerite"))
-        cC.metric("Bruto (planilha)", row.get("bruto_planilha"))
-        st.caption(f"Referência 8781: {row.get('referencia_8781') or '—'} / 30 | Bruto proporcional: {row.get('remuneracao_bruta_proporcional') or '—'}")
-        cD.metric("Remuneração Líquida a Pagar", row.get("valor_a_pagar"))
+tab1, tab2, tab3 = st.tabs(["Consolidado", "Espelho do Recibo", "Exportações"])
 
-        st.markdown("### Holerite original (imagem)")
-        img = render_pdf_page_image(st.session_state["pdf_bytes"], int(row.get("page_index") or 0))
-        st.image(img, use_container_width=True)
+with tab1:
+    st.dataframe(df.drop(columns=["eventos","holerite_texto"], errors="ignore"), width='stretch')
 
-        st.markdown("### Eventos (extraídos pelo GPT)")
-        ev = row.get("eventos") or []
-        st.dataframe(pd.DataFrame(ev), use_container_width=True, hide_index=True)
+with tab2:
+    opts = df.reset_index().to_dict("records")
+    sel = st.selectbox("Selecione o colaborador", opts, format_func=lambda r: r.get("nome",""))
+    row = df.loc[sel["index"]]
 
-        with st.expander("Texto bruto (debug)"):
-            st.text(row.get("raw_text") or "")
+    cA, cB, cC, cD = st.columns(4)
+    cA.metric("Competência", row.get("competencia") or "")
+    cB.metric("Bruto (planilha)", row.get("bruto_planilha"))
+    cC.metric("Ref. dias (holerite)", row.get("referencia_base_dias"))
+    cD.metric("Remuneração Líquida a Pagar", row.get("valor_a_pagar"))
 
-    with tab3:
-        out_dir = ROOT / ".out"
-        out_dir.mkdir(exist_ok=True)
+    st.caption(
+        f"Bruto proporcional: {row.get('bruto_planilha_proporcional') or '-'} | "
+        f"Outros proventos: {row.get('outros_proventos') or 0} | "
+        f"INSS: {row.get('desc_inss_998_821') or 0} | "
+        f"Adiant.: {row.get('desc_adiantamento_981') or 0} | "
+        f"Outros descontos: {row.get('outros_descontos') or 0}"
+    )
 
-        colA, colB = st.columns(2)
-        with colA:
-            if st.button("Gerar Excel (Consolidado)"):
-                xlsx_out = out_dir / "consolidado.xlsx"
-                export_xlsx(df.drop(columns=["eventos","raw_text"], errors="ignore"), str(xlsx_out), logo_path=str(LOGO_PATH) if LOGO_PATH.exists() else None)
-                st.download_button("Baixar Consolidado.xlsx", xlsx_out.read_bytes(), file_name="consolidado.xlsx",
-                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.markdown("### Holerite original (imagem)")
+    try:
+        img = render_pdf_page_image(pdf_bytes, int(row.get("page_index") or 0))
+        st.image(img, width='stretch')
+    except Exception as e:
+        st.warning(f"Não foi possível renderizar a página do PDF: {e}")
 
-        with colB:
-            if st.button("Gerar ZIP de Recibos Complementares (PDF)"):
-                pdfs_dir = out_dir / "recibos"
-                pdfs_dir.mkdir(exist_ok=True)
-                pdfs = generate_all_receipts(df.to_dict(orient="records"), out_dir=str(pdfs_dir), empresa_nome=empresa_nome,
-                                            logo_path=str(LOGO_PATH) if LOGO_PATH.exists() else None,
-                                            holerite_pdf_bytes=st.session_state.get('pdf_bytes'))
-                zip_out = out_dir / "recibos.zip"
-                with zipfile.ZipFile(zip_out, "w", zipfile.ZIP_DEFLATED) as z:
-                    for p in pdfs:
-                        z.write(p, arcname=Path(p).name)
-                st.download_button("Baixar Recibos.zip", zip_out.read_bytes(), file_name="recibos.zip", mime="application/zip")
+    st.markdown("### Eventos (extraídos)")
+    ev = row.get("eventos") or []
+    st.dataframe(pd.DataFrame(ev), width='stretch', hide_index=True)
+
+    with st.expander("Texto bruto (debug)"):
+        st.text(row.get("holerite_texto") or "")
+
+with tab3:
+    st.write("Exporte o consolidado e os recibos complementares.")
+    colA, colB = st.columns(2)
+
+    with colA:
+        # Excel
+        buf = io.BytesIO()
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+        tmp.close()
+        export_xlsx(df, tmp.name, logo_path=str(LOGO_PATH))
+        xlsx_bytes = Path(tmp.name).read_bytes()
+        Path(tmp.name).unlink(missing_ok=True)
+        st.download_button(
+            "Baixar Excel (Consolidado)",
+            data=xlsx_bytes,
+            file_name="consolidado.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    with colB:
+        # ZIP de PDFs
+        tmpdir = tempfile.TemporaryDirectory()
+        pdf_paths = generate_all_receipts(
+            df.to_dict("records"),
+            out_dir=tmpdir.name,
+            empresa_nome="Contare",
+            logo_path=str(LOGO_PATH),
+            holerite_pdf_bytes=pdf_bytes,
+        )
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for p in pdf_paths:
+                zf.write(p, arcname=Path(p).name)
+        zip_buf.seek(0)
+        st.download_button(
+            "Baixar Recibos (PDF em ZIP)",
+            data=zip_buf.getvalue(),
+            file_name="recibos_pdf.zip",
+            mime="application/zip",
+        )
