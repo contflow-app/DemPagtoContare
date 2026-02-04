@@ -178,6 +178,8 @@ if st.button("Processar", type="primary"):
         ref_base_dias = None
         inss = 0.0
         verba_981 = 0.0
+        inss = 0.0
+        inss = 0.0
 
         for e in eventos:
             cod = str(e.get("codigo") or "").strip()
@@ -218,7 +220,7 @@ valor_a_pagar = None
 # componentes para exibição/relatório (sempre definidos)
 outros_proventos = 0.0
 desc_adiantamento = float(locals().get('verba_981', locals().get('desc_adiantamento', 0.0)) or 0.0)
-desc_inss = float(inss or 0.0)
+desc_inss = float(locals().get('inss', 0.0) or 0.0)
 outros_descontos = 0.0
 
 ref_8781 = float(ref_base_dias or 30.0)
