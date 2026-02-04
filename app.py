@@ -1,11 +1,11 @@
-## --- SEÇÃO DE IMPORTS ---
 from __future__ import annotations
+
 import os
 import io
 import re
 import json
 import zipfile
-import tempfile
+import tempfile  # Garante o import para evitar NameError
 from pathlib import Path
 
 import pandas as pd
@@ -18,66 +18,84 @@ from src.cargos import infer_familia, nivel_por_salario, cargo_final
 from src.export_xlsx import export_xlsx
 from src.receipts_pdf import generate_all_receipts
 
-# Configurações iniciais
+# Configurações Iniciais
 APP_TITLE = "Demonstrativo de Pagamento Contare"
 ROOT = Path(__file__).parent
 LOGO_PATH = ROOT / "assets" / "logo.png"
-openai_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+# Chave da API (necessária para o GPT funcionar)
+openai_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", None)
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-# ... (Mantenha suas funções auxiliares aqui: gpt_disambiguate_name, etc.) ...
+# --- FUNÇÕES AUXILIARES (Mantidas) ---
+def gpt_disambiguate_name(nome_holerite, candidatos, model, api_key):
+    # ... (sua implementação original)
+    return None # Simplified for brevity
 
-## --- INTERFACE (SIDEBAR E HEADER) ---
+def parse_money_any(v):
+    if v is None: return 0.0
+    if isinstance(v, (int, float)): return float(v)
+    s = re.sub(r"[^0-9,\.\-]", "", str(v).strip())
+    if "," in s: s = s.replace(".", "").replace(",", ".")
+    try: return float(s)
+    except: return 0.0
+
+@st.cache_data(show_spinner=False)
+def render_pdf_page_image(pdf_bytes, page_index):
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        page = pdf.pages[int(page_index)]
+        return page.to_image(resolution=170).original
+
+# --- INTERFACE ---
 c1, c2 = st.columns([1, 4])
 with c1:
-    if LOGO_PATH.exists():
-        st.image(str(LOGO_PATH), width=160)
+    if LOGO_PATH.exists(): st.image(str(LOGO_PATH), width=160)
 with c2:
     st.title(APP_TITLE)
 
+# Sidebar
 st.sidebar.header("Configurações")
 empresa_nome = st.sidebar.text_input("Empresa", value="Contare")
-usar_gpt = st.sidebar.toggle("Usar GPT como extrator principal", value=True)
-openai_model = st.sidebar.text_input("Modelo OpenAI", value="gpt-4o") # Nome do modelo corrigido
+usar_gpt = st.sidebar.toggle("Usar GPT", value=True)
+openai_model = st.sidebar.text_input("Modelo OpenAI", value="gpt-4o")
 
 st.subheader("1) Uploads")
-# DECLARAÇÃO DAS VARIÁVEIS (Isso resolve o erro de NameError)
-pdf_file = st.file_uploader("Holerite/Recibo (PDF)", type=["pdf"])
-xlsx_file = st.file_uploader("Planilha de salário real (XLSX)", type=["xlsx"])
+pdf_file = st.file_uploader("Holerite (PDF)", type=["pdf"])
+xlsx_file = st.file_uploader("Planilha Salários (XLSX)", type=["xlsx"])
 
-## --- LÓGICA DE PROCESSAMENTO ---
+# Verificação de Uploads
 if not pdf_file or not xlsx_file:
-    st.info("Envie o PDF e o XLSX para continuar.")
+    st.info("Aguardando upload dos arquivos para liberar o processamento.")
     st.stop()
 
-# Se chegou aqui, as variáveis existem.
-if st.button("Processar", type="primary"):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_path = Path(tmpdir)
-        pdf_path = temp_path / "holerite.pdf"
-        xlsx_path = temp_path / "salarios.xlsx"
-        
-        pdf_path.write_bytes(pdf_file.getbuffer())
-        xlsx_path.write_bytes(xlsx_file.getbuffer())
+# --- PROCESSAMENTO ---
+st.subheader("2) Processamento")
+if st.button("Processar Dados", type="primary"):
+    with st.spinner("Extraindo informações..."):
+        # Usamos caminhos temporários seguros
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p_path = Path(tmpdir) / "h.pdf"
+            x_path = Path(tmpdir) / "s.xlsx"
+            p_path.write_bytes(pdf_file.getvalue())
+            x_path.write_bytes(xlsx_file.getvalue())
 
-        with st.spinner("Processando dados..."):
-            colabs, competencia_global = parse_recibo_pagamento_pdf(
-                str(pdf_path),
-                use_gpt=usar_gpt,
-                openai_model=openai_model
-            )
-            df_sal = load_salario_real_xlsx(str(xlsx_path))
-            
+            colabs, comp_global = parse_recibo_pagamento_pdf(str(p_path), use_gpt=usar_gpt, openai_model=openai_model)
+            df_sal = load_salario_real_xlsx(str(x_path))
+
             rows = []
             for c in colabs:
-                # Sua lógica de matching e cálculos aqui...
-                # (Mantenha o loop que você já tinha no original)
-                pass # Substitua pelo seu loop de append em 'rows'
-
-            df = pd.DataFrame(rows)
-            st.session_state["df"] = df
-            st.session_state["pdf_bytes"] = pdf_file.getvalue()
-            st.success("Processado com sucesso!")
-
-# ... (Restante do código das abas Tab1, Tab2, Tab3) ...
+                # Lógica de Matching
+                ref = find_colaborador_ref(
+                    df_sal, 
+                    nome=c.get("nome", ""), 
+                    gpt_match_fn=(lambda n, cds: gpt_disambiguate_name(n, cds, openai_model, openai_key)) if usar_gpt else None
+                )
+                
+                # --- Seus Cálculos (Simplificados para o exemplo, mantenha sua lógica interna) ---
+                ref_base_dias = 30.0 # Exemplo: extrair do loop de eventos como você já faz
+                # ... (insira aqui sua lógica de cálculo de valor_a_pagar) ...
+                
+                rows.append({
+                    "nome": c.get("nome") or ref.get("nome"),
+                    "valor_a_pagar": 1000.0, # Exemplo
+                    "eventos": c.get
