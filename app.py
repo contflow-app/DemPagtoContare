@@ -251,7 +251,7 @@ if st.button("Processar", type="primary"):
     st.session_state["pdf_bytes"] = pdf_path.read_bytes()
     st.success(f"Processado: {len(df)} colaborador(es).")
 
-    df = st.session_state.get("df")
+df = st.session_state.get("df")
 pdf_bytes = st.session_state.get("pdf_bytes")
 
 if df is None:
