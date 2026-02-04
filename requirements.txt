@@ -1,7 +1,0 @@
-streamlit
-pandas
-pdfplumber
-openai
-openpyxl
-reportlab
-pillow
